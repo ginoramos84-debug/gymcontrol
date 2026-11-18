@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GymControl - Gestão Offline</title>
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#10b981">
+  <!-- Tailwind CSS para design moderno e responsivo -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Dexie.js: Base de Dados Offline no navegador -->
+  <script src="https://unpkg.com/dexie/dist/dexie.js"></script>
+</head>
+<body class="bg-slate-900 text-slate-100 font-sans min-h-screen pb-20">
+
+  <!-- 1. ECRÃ DE CADASTRO INICIAL DA ACADEMIA (Aparece só na 1ª vez) -->
+  <div id="tela-cadastro-academia" class="hidden min-h-screen flex items-center justify-center p-4">
+    <div class="bg-slate-800 p-6 rounded-2xl shadow-xl w-full max-w-md border border-slate-700">
+      <h1 class="text-2xl font-bold text-emerald-400 mb-2">Bem-vindo ao GymControl</h1>
+      <p class="text-slate-400 text-sm mb-6">Regista a tua academia para ativar <strong>30 dias de teste gratuito</strong> (100% Offline).</p>
+      
+      <form id="form-academia" class="space-y-4">
+        <div>
+          <label class="block text-sm text-slate-300 mb-1">Nome da Academia / Ginásio *</label>
+          <input type="text" id="gym-nome" required placeholder="Ex: Maputo Fitness Club" 
+                 class="w-full p-3 rounded-lg bg-slate-900 border border-slate-600 focus:border-emerald-400 outline-none">
+        </div>
+        <div>
+          <label class="block text-sm text-slate-300 mb-1">Nome do Responsável *</label>
+          <input type="text" id="gym-responsavel" required placeholder="Teu nome" 
+                 class="w-full p-3 rounded-lg bg-slate-900 border border-slate-600 focus:border-emerald-400 outline-none">
+        </div>
+        <div>
+          <label class="block text-sm text-slate-300 mb-1">Telefone / WhatsApp *</label>
+          <input type="tel" id="gym-telefone" required placeholder="Ex: 84 000 0000" 
+                 class="w-full p-3 rounded-lg bg-slate-900 border border-slate-600 focus:border-emerald-400 outline-none">
+        </div>
+        <button type="submit" class="w-full bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold py-3 rounded-lg transition">
+          Ativar 30 Dias Grátis
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- 2. ECRÃ DE BLOQUEIO (Quando acaba o Trial ou a Mensalidade) -->
+  <div id="tela-bloqueio" class="hidden min-h-screen flex items-center justify-center p-4">
+    <div class="bg-slate-800 p-6 rounded-2xl shadow-xl w-full max-w-md border border-red-500/50 text-center">
+      <div class="w-16 h-16 bg-red-500/20 text-red-400 rounded-full flex items-center justify-center mx-auto mb-4 text-2xl font-bold">!</div>
+      <h2 class="text-2xl font-bold text-red-400 mb-2">Licença Expirada</h2>
+      <p class="text-slate-300 text-sm mb-4">O período de uso deste ginásio terminou. Para continuar a usar o sistema, efetua o pagamento da mensalidade e insere a chave de ativação.</p>
+      
+      <div class="bg-slate-900 p-3 rounded-lg border border-slate-700 mb-4">
+        <span class="text-xs text-slate-400 block">ID Único do teu Ginásio (Envia ao suporte):</span>
+        <strong id="bloqueio-gym-id" class="text-lg text-emerald-400 tracking-wider select-all">---</strong>
+      </div>
+
+      <form id="form-ativar-licenca" class="space-y-3">
+        <input type="text" id="input-chave-licenca" required placeholder="Cola aqui a Chave de Ativação" 
+               class="w-full p-3 rounded-lg bg-slate-900 border border-slate-600 text-center uppercase tracking-widest outline-none focus:border-emerald-400">
+        <button type="submit" class="w-full bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold py-3 rounded-lg">
+          Desbloquear por +30 Dias
+        </button>
+      </form>
+      <p id="msg-erro-chave" class="text-red-400 text-xs mt-3 hidden"></p>
+    </div>
+  </div>
+
+  <!-- 3. PAINEL PRINCIPAL DO GINÁSIO -->
+  <div id="painel-principal" class="hidden max-w-5xl mx-auto p-4">
+    <!-- Cabeçalho -->
+    <header class="flex flex-wrap justify-between items-center bg-slate-800 p-4 rounded-xl border border-slate-700 mb-4 gap-4">
+      <div>
+        <h1 id="header-gym-nome" class="text-xl font-bold text-white">Nome do Ginásio</h1>
+        <p class="text-xs text-slate-400">ID: <span id="header-gym-id" class="text-emerald-400 font-mono"></span> • Modo Offline Ativo</p>
+      </div>
+      <div class="flex items-center gap-3">
+        <span id="badge-dias-restantes" class="bg-emerald-500/20 text-emerald-300 text-xs font-semibold px-3 py-1.5 rounded-full border border-emerald-500/30">
+          30 dias restantes
+        </span>
+        <button onclick="simularExpiracao()" class="text-xs bg-slate-700 hover:bg-slate-600 px-2.5 py-1.5 rounded text-slate-300">
+          Testar Bloqueio
+        </button>
+      </div>
+    </header>
+
+    <!-- BARRA DE NAVEGAÇÃO POR ABAS -->
+    <nav class="grid grid-cols-2 md:grid-cols-4 gap-2 mb-6 bg-slate-800 p-2 rounded-xl border border-slate-700">
+      <button onclick="mudarAba('aba-inicio')" id="btn-aba-inicio" class="py-2.5 px-4 rounded-lg text-sm font-semibold transition bg-emerald-500 text-slate-950 shadow text-center">
+        🏠 Início (Check-in)
+      </button>
+      <button onclick="mudarAba('aba-alunos')" id="btn-aba-alunos" class="py-2.5 px-4 rounded-lg text-sm font-semibold transition text-slate-300 hover:bg-slate-700 text-center">
+        👥 Alunos
+      </button>
+      <button onclick="mudarAba('aba-caixa')" id="btn-aba-caixa" class="py-2.5 px-4 rounded-lg text-sm font-semibold transition text-slate-300 hover:bg-slate-700 text-center">
+        💵 Caixa & Relatórios
+      </button>
+      <button onclick="mudarAba('aba-definicoes')" id="btn-aba-definicoes" class="py-2.5 px-4 rounded-lg text-sm font-semibold transition text-slate-300 hover:bg-slate-700 text-center">
+        ⚙️ Definições & Backup
+      </button>
+    </nav>
+
+    <!-- ================= ABAS ================= -->
+
+    <!-- ABA 1: INÍCIO (DASHBOARD & CHECK-IN) -->
+    <div id="aba-inicio" class="space-y-6">
+      <!-- Resumo Rápido -->
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div class="bg-slate-800 p-5 rounded-xl border border-slate-700">
+          <p class="text-slate-400 text-sm">Alunos Registados</p>
+          <p id="stat-total-alunos" class="text-3xl font-bold text-emerald-400 mt-1">0</p>
+        </div>
+        <div class="bg-slate-800 p-5 rounded-xl border border-slate-700">
+          <p class="text-slate-400 text-sm">Expiram em 3 dias</p>
+          <p id="stat-expiram-breve" class="text-3xl font-bold text-amber-400 mt-1">0</p>
+        </div>
+        <div class="bg-slate-800 p-5 rounded-xl border border-slate-700">
+          <p class="text-slate-400 text-sm">Caixa de Hoje</p>
+          <p class="text-3xl font-bold text-white mt-1">0,00 MT</p>
+        </div>
+      </div>
+
+      <!-- SECÇÃO DE CHECK-IN NA RECEÇÃO -->
+      <div class="bg-slate-800 p-6 rounded-xl border border-slate-700">
+        <h2 class="text-lg font-bold text-white mb-2">⚡ Check-in Rápido na Receção</h2>
+        <p class="text-xs text-slate-400 mb-4">Pesquisa pelo nome do aluno para validar a entrada e registar o acesso diário.</p>
+        
+        <div class="relative">
+          <input type="text" id="input-pesquisa-checkin" placeholder="Escreve o nome do aluno para pesquisar..." 
+                 class="w-full p-3 rounded-lg bg-slate-900 border border-slate-600 text-sm focus:border-emerald-400 outline-none">
+          
+          <!-- Lista suspensa de resultados da pesquisa -->
+          <div id="resultados-checkin" class="absolute left-0 right-0 mt-1 bg-slate-900 border border-slate-700 rounded-lg shadow-2xl max-h-60 overflow-y-auto z-50 hidden divide-y divide-slate-800">
+            <!-- Os resultados aparecem aqui -->
+          </div>
+        </div>
+      </div>
+
+      <!-- HISTÓRICO DE CHECK-INS DE HOJE -->
+      <div class="bg-slate-800 p-6 rounded-xl border border-slate-700">
+        <h2 class="text-lg font-bold text-white mb-3">🕒 Entradas / Check-ins de Hoje</h2>
+        <div class="overflow-x-auto max-h-60 overflow-y-auto">
+          <table class="w-full text-left border-collapse">
+            <thead>
+              <tr class="border-b border-slate-700 text-xs text-slate-400">
+                <th class="p-3">Hora</th>
+                <th class="p-3">Nome do Aluno</th>
+                <th class="p-3 text-right">Estado</th>
+              </tr>
+            </thead>
+            <tbody id="tabela-checkins-hoje" class="text-sm divide-y divide-slate-700/50">
+              <!-- Check-ins do dia aparecem aqui -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ABA 2: ALUNOS (CADASTRO E LISTAGEM) -->
+    <div id="aba-alunos" class="hidden space-y-6">
+      <!-- SECÇÃO DE NOVO ALUNO -->
+      <div class="bg-slate-800 p-6 rounded-xl border border-slate-700">
+        <h2 class="text-lg font-bold text-white mb-4">➕ Registar Novo Aluno & Pagamento</h2>
+        <form id="form-novo-aluno" class="grid grid-cols-1 md:grid-cols-5 gap-4">
+          <div>
+            <label class="block text-xs text-slate-400 mb-1">Nome Completo *</label>
+            <input type="text" id="aluno-nome" required placeholder="Ex: Armando Guambe" 
+                   class="w-full p-2.5 rounded-lg bg-slate-900 border border-slate-600 text-sm focus:border-emerald-400 outline-none">
+          </div>
+          <div>
+            <label class="block text-xs text-slate-400 mb-1">Telefone *</label>
+            <input type="tel" id="aluno-telefone" required placeholder="Ex: 84 123 4567" 
+                   class="w-full p-2.5 rounded-lg bg-slate-900 border border-slate-600 text-sm focus:border-emerald-400 outline-none">
+          </div>
+          <div>
+            <label class="block text-xs text-slate-400 mb-1">Modalidade / Plano *</label>
+            <select id="aluno-plano" class="w-full p-2.5 rounded-lg bg-slate-900 border border-slate-600 text-sm focus:border-emerald-400 outline-none">
+              <!-- Preenchido automaticamente com os preços da academia -->
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs text-slate-400 mb-1">Método de Pagamento *</label>
+            <select id="pagamento-metodo" class="w-full p-2.5 rounded-lg bg-slate-900 border border-slate-600 text-sm focus:border-emerald-400 outline-none">
+              <option value="Dinheiro">Dinheiro</option>
+              <option value="M-Pesa">M-Pesa</option>
+              <option value="e-Mola">e-Mola</option>
+              <option value="POS">POS / Cartão</option>
+            </select>
+          </div>
+          <div class="flex items-end">
+            <button type="submit" class="w-full bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold p-2.5 rounded-lg text-sm transition">
+              Salvar & Pagar
+            </button>
+          </div>
+        </form>
+      </div>
+
+      <!-- LISTA DE ALUNOS COM FILTROS -->
+      <div class="bg-slate-800 p-6 rounded-xl border border-slate-700">
+        <div class="flex flex-wrap justify-between items-center mb-4 gap-3">
+          <h2 class="text-lg font-bold text-white">📋 Lista de Alunos</h2>
+          <div class="flex flex-wrap gap-1.5 text-xs">
+            <button onclick="filtrarAlunos('todos')" id="filtro-todos" class="px-3 py-1.5 rounded-lg bg-emerald-500 text-slate-950 font-bold transition">Todos</button>
+            <button onclick="filtrarAlunos('ativos')" id="filtro-ativos" class="px-3 py-1.5 rounded-lg bg-slate-900 text-slate-300 hover:bg-slate-700 transition">Ativos</button>
+            <button onclick="filtrarAlunos('breve')" id="filtro-breve" class="px-3 py-1.5 rounded-lg bg-slate-900 text-slate-300 hover:bg-slate-700 transition">Expira em breve</button>
+            <button onclick="filtrarAlunos('expirados')" id="filtro-expirados" class="px-3 py-1.5 rounded-lg bg-slate-900 text-slate-300 hover:bg-slate-700 transition">Expirados</button>
+          </div>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left border-collapse">
+            <thead>
+              <tr class="border-b border-slate-700 text-xs text-slate-400">
+                <th class="p-3">Nome</th>
+                <th class="p-3">Contacto</th>
+                <th class="p-3">Plano</th>
+                <th class="p-3">Expira em</th>
+                <th class="p-3">Status</th>
+                <th class="p-3 text-right">Ações</th>
+              </tr>
+            </thead>
+            <tbody id="tabela-alunos-corpo" class="text-sm divide-y divide-slate-700/50">
+              <!-- Alunos aparecem aqui -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ABA 3: CAIXA & RELATÓRIOS -->
+    <div id="aba-caixa" class="hidden space-y-6">
+      <!-- HISTÓRICO DE PAGAMENTOS / FLUXO DE CAIXA -->
+      <div class="bg-slate-800 p-6 rounded-xl border border-slate-700">
+        <div class="flex flex-wrap justify-between items-center mb-4 gap-2">
+          <h2 class="text-lg font-bold text-white">💵 Registo de Entradas no Caixa (Hoje)</h2>
+          <div id="resumo-metodos-hoje" class="flex flex-wrap gap-2 text-xs">
+            <!-- Resumo Dinheiro / M-Pesa / e-Mola / POS -->
+          </div>
+        </div>
+        <div class="overflow-x-auto max-h-72 overflow-y-auto">
+          <table class="w-full text-left border-collapse">
+            <thead>
+              <tr class="border-b border-slate-700 text-xs text-slate-400">
+                <th class="p-3">Hora</th>
+                <th class="p-3">Aluno</th>
+                <th class="p-3">Plano</th>
+                <th class="p-3">Método</th>
+                <th class="p-3 text-right">Valor</th>
+              </tr>
+            </thead>
+            <tbody id="tabela-pagamentos-corpo" class="text-sm divide-y divide-slate-700/50">
+              <!-- Pagamentos aparecem aqui -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- RELATÓRIOS FINANCEIROS E FATURAMENTO (SEMANAL / MENSAL) -->
+      <div class="bg-slate-800 p-6 rounded-xl border border-slate-700">
+        <h2 class="text-lg font-bold text-white mb-4">📈 Relatórios e Faturamento</h2>
+        
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+          <div class="bg-slate-900 p-4 rounded-xl border border-slate-700">
+            <p class="text-xs text-slate-400">Faturamento da Semana (Últimos 7 Dias)</p>
+            <p id="relatorio-total-semana" class="text-2xl font-bold text-emerald-400 mt-1">0,00 MT</p>
+          </div>
+          <div class="bg-slate-900 p-4 rounded-xl border border-slate-700">
+            <p class="text-xs text-slate-400">Faturamento do Mês Atual</p>
+            <p id="relatorio-total-mes" class="text-2xl font-bold text-emerald-400 mt-1">0,00 MT</p>
+          </div>
+        </div>
+
+        <h3 class="text-sm font-bold text-slate-300 mb-3">Histórico Geral de Pagamentos</h3>
+        <div class="overflow-x-auto max-h-60 overflow-y-auto">
+          <table class="w-full text-left border-collapse">
+            <thead>
+              <tr class="border-b border-slate-700 text-xs text-slate-400">
+                <th class="p-3">Data</th>
+                <th class="p-3">Aluno</th>
+                <th class="p-3">Plano</th>
+                <th class="p-3">Método</th>
+                <th class="p-3 text-right">Valor</th>
+              </tr>
+            </thead>
+            <tbody id="tabela-historico-geral" class="text-sm divide-y divide-slate-700/50">
+              <!-- Histórico completo aparece aqui -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ABA 4: DEFINIÇÕES & BACKUP -->
+    <div id="aba-definicoes" class="hidden space-y-6">
+      <!-- CONFIGURAÇÃO DE PREÇOS DA ACADEMIA -->
+      <div class="bg-slate-800 p-5 rounded-xl border border-slate-700">
+        <div class="flex justify-between items-center mb-3">
+          <h2 class="text-base font-bold text-emerald-400">💰 Preços dos Pacotes desta Academia (MT)</h2>
+          <span class="text-xs text-slate-400">Define os valores cobrados aos alunos</span>
+        </div>
+        <form id="form-precos" class="grid grid-cols-1 md:grid-cols-4 gap-3">
+          <div>
+            <label class="block text-xs text-slate-400 mb-1">Plano Diário (1 Dia)</label>
+            <input type="number" id="preco-diario" required min="1" step="any" placeholder="Ex: 100"
+                   class="w-full p-2 rounded-lg bg-slate-900 border border-slate-600 text-sm text-white focus:border-emerald-400 outline-none">
+          </div>
+          <div>
+            <label class="block text-xs text-slate-400 mb-1">Plano Semanal (7 Dias)</label>
+            <input type="number" id="preco-semanal" required min="1" step="any" placeholder="Ex: 500"
+                   class="w-full p-2 rounded-lg bg-slate-900 border border-slate-600 text-sm text-white focus:border-emerald-400 outline-none">
+          </div>
+          <div>
+            <label class="block text-xs text-slate-400 mb-1">Plano Mensal (30 Dias)</label>
+            <input type="number" id="preco-mensal" required min="1" step="any" placeholder="Ex: 1500"
+                   class="w-full p-2 rounded-lg bg-slate-900 border border-slate-600 text-sm text-white focus:border-emerald-400 outline-none">
+          </div>
+          <div class="flex items-end">
+            <button type="submit" class="w-full bg-slate-700 hover:bg-emerald-500 hover:text-slate-950 text-white font-semibold p-2 rounded-lg text-sm transition">
+              Atualizar Preços
+            </button>
+          </div>
+        </form>
+      </div>
+
+      <!-- SECÇÃO DE BACKUP E SEGURANÇA DOS DADOS -->
+      <div class="bg-slate-800 p-5 rounded-xl border border-slate-700 flex flex-wrap justify-between items-center gap-4">
+        <div>
+          <h2 class="text-base font-bold text-white">🔒 Segurança e Backup dos Dados (Offline)</h2>
+          <p class="text-xs text-slate-400">Guarda uma cópia de segurança dos alunos e do caixa para evitar perdas.</p>
+        </div>
+        <div class="flex items-center gap-3">
+          <button onclick="exportarBackup()" class="bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs font-semibold px-4 py-2.5 rounded-lg transition flex items-center gap-1.5">
+            📥 Descarregar Backup
+          </button>
+          <label class="bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs font-semibold px-4 py-2.5 rounded-lg transition cursor-pointer flex items-center gap-1.5">
+            📤 Restaurar Backup
+            <input type="file" id="input-importar-backup" accept=".json" class="hidden" onchange="importarBackup(event)">
+          </label>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- 4. MODAL DE RENOVAÇÃO DE PLANO DO ALUNO -->
+  <div id="modal-renovacao" class="hidden fixed inset-0 bg-black/75 flex items-center justify-center p-4 z-50">
+    <div class="bg-slate-800 p-6 rounded-2xl border border-slate-600 w-full max-w-md shadow-2xl">
+      <h3 class="text-lg font-bold text-emerald-400 mb-1">🔄 Renovar Mensalidade / Plano</h3>
+      <p id="modal-aluno-nome" class="text-sm text-slate-300 mb-4">Aluno: ---</p>
+
+      <form id="form-renovar-aluno" class="space-y-4">
+        <input type="hidden" id="modal-aluno-id">
+        
+        <div>
+          <label class="block text-xs text-slate-400 mb-1">Escolher Novo Plano *</label>
+          <select id="modal-plano-select" class="w-full p-2.5 rounded-lg bg-slate-900 border border-slate-600 text-sm text-white outline-none focus:border-emerald-400">
+            <!-- Preenchido via JS com os preços atuais -->
+          </select>
+        </div>
+
+        <div>
+          <label class="block text-xs text-slate-400 mb-1">Método de Pagamento *</label>
+          <select id="modal-metodo-select" class="w-full p-2.5 rounded-lg bg-slate-900 border border-slate-600 text-sm text-white outline-none focus:border-emerald-400">
+            <option value="Dinheiro">Dinheiro</option>
+            <option value="M-Pesa">M-Pesa</option>
+            <option value="e-Mola">e-Mola</option>
+            <option value="POS">POS / Cartão</option>
+          </select>
+        </div>
+
+        <div class="flex gap-3 pt-2">
+          <button type="button" onclick="fecharModalRenovacao()" class="w-1/2 bg-slate-700 hover:bg-slate-600 text-white py-2.5 rounded-lg text-sm font-semibold">
+            Cancelar
+          </button>
+          <button type="submit" class="w-1/2 bg-emerald-500 hover:bg-emerald-600 text-slate-950 py-2.5 rounded-lg text-bold">
+            Confirmar Pagamento
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+  <script>
+    // Função simples para alternar entre as abas
+    function mudarAba(idAba) {
+      const abas = ["aba-inicio", "aba-alunos", "aba-caixa", "aba-definicoes"];
+      const botoes = ["btn-aba-inicio", "btn-aba-alunos", "btn-aba-caixa", "btn-aba-definicoes"];
+
+      abas.forEach(aba => document.getElementById(aba).classList.add("hidden"));
+      botoes.forEach(btn => {
+        const el = document.getElementById(btn);
+        el.className = "py-2.5 px-4 rounded-lg text-sm font-semibold transition text-slate-300 hover:bg-slate-700 text-center";
+      });
+
+      document.getElementById(idAba).classList.remove("hidden");
+      const btnAtivo = document.getElementById("btn-" + idAba);
+      btnAtivo.className = "py-2.5 px-4 rounded-lg text-sm font-semibold transition bg-emerald-500 text-slate-950 shadow text-center";
+    }
+
+    if ("serviceWorker" in navigator) {
+      window.addEventListener("load", () => {
+        navigator.serviceWorker.register("./service-worker.js")
+          .then(() => console.log("Modo Offline (Service Worker) ativo!"))
+          .catch((err) => console.error("Erro no Service Worker:", err));
+      });
+    }
+  </script>
+</body>
+</html>
