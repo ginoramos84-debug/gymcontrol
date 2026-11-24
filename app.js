@@ -1,34 +1,72 @@
 // ============================================================================
-// CONFIGURAÇÃO DO SUPABASE — COLA AQUI AS TUAS CHAVES DO PROJETO
+// CONFIGURAÇÃO DO SUPABASE — PROJECT URL & PUBLISHABLE KEY
 // ============================================================================
-const SUPABASE_URL = "COLA_AQUI_O_TEU_PROJECT_URL"; // Ex: https://xxxx.supabase.co
-const SUPABASE_ANON_KEY = "COLA_AQUI_A_TUA_PUBLISHABLE_KEY"; // Ex: sb_publishable_...
+const SUPABASE_URL = "https://ixjboxwderwkpplznaaa.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_54UEzsED6kb-T-f-fa6tlQ_YfN1064-";
 
-const NUMERO_MPESA_ADMIN = "84 000 0000"; // Atualiza para o teu número M-Pesa
-const NUMERO_EMOLA_ADMIN = "87 000 0000"; // Atualiza para o teu número e-Mola
-const VALOR_RENOVACAO_MT = 10;
+const NUMERO_MPESA_ADMIN = "846759324";
+const NUMERO_EMOLA_ADMIN = "875096046";
+const VALOR_RENOVACAO_MT = 100;
 // ============================================================================
 
-const supabaseClient =
-  window.supabase &&
-  !SUPABASE_URL.startsWith("COLA_AQUI_") &&
-  !SUPABASE_ANON_KEY.startsWith("COLA_AQUI_")
-    ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
-    : null;
+let supabaseClient = null;
+try {
+  const urlLimpa = String(SUPABASE_URL || "").trim();
+  const chaveLimpa = String(SUPABASE_ANON_KEY || "").trim();
+  const urlValida = /^https?:\/\/.+/i.test(urlLimpa) && !urlLimpa.includes("COLA_AQUI");
+  const chaveValida = chaveLimpa.length > 10 && !chaveLimpa.includes("COLA_AQUI");
+
+  if (window.supabase && typeof window.supabase.createClient === "function" && urlValida && chaveValida) {
+    supabaseClient = window.supabase.createClient(urlLimpa, chaveLimpa);
+  }
+} catch (err) {
+  console.warn("Supabase não inicializado:", err.message);
+  supabaseClient = null;
+}
 
 // 1. INICIALIZAR A BASE DE DADOS OFFLINE (IndexedDB via Dexie)
 const db = new Dexie("GymControlOfflineDB");
 
-db.version(1).stores({
+db.version(2).stores({
   config: "id",
-  alunos: "++id, nome, telefone, plano, dataExpiracao",
-  pagamentos: "++id, alunoId, data, valor, metodo",
-  checkins: "++id, alunoId, dataHora"
+  alunos: "++id, uid, gymId, nome, telefone, plano, dataExpiracao, sincronizado",
+  pagamentos: "++id, uid, gymId, alunoUid, alunoId, dataHora, valor, metodo, sincronizado",
+  checkins: "++id, uid, gymId, alunoUid, alunoId, alunoNome, plano, dataHora, sincronizado"
+}).upgrade(async (tx) => {
+  const cfg = await tx.table("config").get("academia_principal");
+  const gymId = cfg?.gymId || "";
+
+  await tx.table("alunos").toCollection().modify((a) => {
+    if (!a.uid) a.uid = crypto.randomUUID ? crypto.randomUUID() : `al-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    if (!a.gymId && gymId) a.gymId = gymId;
+    if (a.sincronizado === undefined) a.sincronizado = 0;
+  });
+
+  await tx.table("pagamentos").toCollection().modify((p) => {
+    if (!p.uid) p.uid = crypto.randomUUID ? crypto.randomUUID() : `pg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    if (!p.gymId && gymId) p.gymId = gymId;
+    if (!p.dataHora && p.data) p.dataHora = typeof p.data === "number" ? p.data : new Date(p.data).getTime();
+    if (p.sincronizado === undefined) p.sincronizado = 0;
+  });
+
+  await tx.table("checkins").toCollection().modify((c) => {
+    if (!c.uid) c.uid = crypto.randomUUID ? crypto.randomUUID() : `ch-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    if (!c.gymId && gymId) c.gymId = gymId;
+    if (!c.dataHora && c.data_hora) c.dataHora = typeof c.data_hora === "number" ? c.data_hora : new Date(c.data_hora).getTime();
+    if (c.sincronizado === undefined) c.sincronizado = 0;
+  });
 });
 
 const SEGREDO_MESTRE = "GYM_MOZ_2026_SECRETO";
 const CHAVE_SESSAO_LOCAL = "gymcontrol_sessao_autenticada";
 let filtroAtualAlunos = "todos";
+
+function gerarUidUnico(prefixo = "item") {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `${prefixo}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
 
 async function gerarHashSenha(senha) {
   const encoder = new TextEncoder();
@@ -51,17 +89,18 @@ function alternarAbaAuth(aba) {
   const msgErro = document.getElementById("msg-erro-auth");
 
   if (msgErro) msgErro.classList.add("hidden");
+  if (!formLogin || !formSignup || !btnLogin || !btnSignup) return;
 
   if (aba === "login") {
     formLogin.classList.remove("hidden");
     formSignup.classList.add("hidden");
-    btnLogin.className = "py-2 rounded-lg text-xs font-extrabold transition bg-emerald-500 text-slate-950";
-    btnSignup.className = "py-2 rounded-lg text-xs font-bold transition text-slate-400 hover:text-white";
+    btnLogin.className = "py-2.5 rounded-xl text-xs font-extrabold transition bg-teal-400 text-slate-950 shadow";
+    btnSignup.className = "py-2.5 rounded-xl text-xs font-bold transition text-slate-400 hover:text-white";
   } else {
     formLogin.classList.add("hidden");
     formSignup.classList.remove("hidden");
-    btnSignup.className = "py-2 rounded-lg text-xs font-extrabold transition bg-emerald-500 text-slate-950";
-    btnLogin.className = "py-2 rounded-lg text-xs font-bold transition text-slate-400 hover:text-white";
+    btnSignup.className = "py-2.5 rounded-xl text-xs font-extrabold transition bg-teal-400 text-slate-950 shadow";
+    btnLogin.className = "py-2.5 rounded-xl text-xs font-bold transition text-slate-400 hover:text-white";
   }
 }
 
@@ -71,6 +110,293 @@ function exibirErroAuth(msg) {
   el.textContent = msg;
   el.classList.remove("hidden");
 }
+
+function alternarFormAluno(forcarEstado) {
+  const box = document.getElementById("box-cadastro-aluno");
+  const btn = document.getElementById("btn-abrir-form-aluno");
+  if (!box) return;
+
+  const deveAbrir = typeof forcarEstado === "boolean"
+    ? forcarEstado
+    : box.classList.contains("hidden");
+
+  if (deveAbrir) {
+    box.classList.remove("hidden");
+    if (btn) btn.textContent = "−";
+    const inputNome = document.getElementById("aluno-nome");
+    if (inputNome) inputNome.focus();
+  } else {
+    box.classList.add("hidden");
+    if (btn) btn.textContent = "+";
+  }
+}
+
+// ============================================================================
+// SINCRONIZAÇÃO BIDIRECIONAL SUPABASE <-> DEXIE (POR gym_id)
+// ============================================================================
+function calcularEstadoAluno(dataExpiracao) {
+  const agora = Date.now();
+  const tresDiasEmMs = 3 * 24 * 60 * 60 * 1000;
+  if (dataExpiracao < agora) return "expirado";
+  if (dataExpiracao <= agora + tresDiasEmMs) return "expira_em_breve";
+  return "ativo";
+}
+
+function formatarDataIso(timestampMs) {
+  const d = new Date(timestampMs || Date.now());
+  return d.toISOString().slice(0, 10);
+}
+
+async function enviarAlunoParaNuvem(aluno) {
+  if (!supabaseClient || !navigator.onLine || !aluno?.gymId) return false;
+  const uid = aluno.uid || gerarUidUnico("aluno");
+  const payload = {
+    id: uid,
+    gym_id: aluno.gymId,
+    nome: aluno.nome,
+    telefone: aluno.telefone || "",
+    plano: aluno.plano || "mensal",
+    validade: formatarDataIso(aluno.dataExpiracao),
+    estado: calcularEstadoAluno(aluno.dataExpiracao),
+    atualizado_em: new Date().toISOString()
+  };
+
+  const { error } = await supabaseClient
+    .from("alunos")
+    .upsert(payload, { onConflict: "id" });
+
+  if (error) {
+    console.warn("Erro ao sincronizar aluno na nuvem:", error.message);
+    return false;
+  }
+
+  if (aluno.id) {
+    await db.alunos.update(aluno.id, { uid, sincronizado: 1 });
+  }
+  return true;
+}
+
+async function enviarPagamentoParaNuvem(pagamento, alunoUid = null) {
+  if (!supabaseClient || !navigator.onLine || !pagamento?.gymId) return false;
+  const uid = pagamento.uid || gerarUidUnico("pag");
+  const payload = {
+    id: uid,
+    gym_id: pagamento.gymId,
+    aluno_id: alunoUid || pagamento.alunoUid || null,
+    valor: Number(pagamento.valor || 0),
+    data_pagamento: new Date(pagamento.dataHora || Date.now()).toISOString(),
+    metodo: pagamento.metodo || "Dinheiro",
+    atualizado_em: new Date().toISOString()
+  };
+
+  const { error } = await supabaseClient
+    .from("pagamentos")
+    .upsert(payload, { onConflict: "id" });
+
+  if (error) {
+    console.warn("Erro ao sincronizar pagamento na nuvem:", error.message);
+    return false;
+  }
+
+  if (pagamento.id) {
+    await db.pagamentos.update(pagamento.id, { uid, sincronizado: 1 });
+  }
+  return true;
+}
+
+async function enviarCheckinParaNuvem(checkin, alunoUid = null) {
+  if (!supabaseClient || !navigator.onLine || !checkin?.gymId) return false;
+  const uid = checkin.uid || gerarUidUnico("chk");
+  const payload = {
+    id: uid,
+    gym_id: checkin.gymId,
+    aluno_id: alunoUid || checkin.alunoUid || null,
+    nome_aluno: checkin.alunoNome || "Aluno",
+    plano: checkin.plano || null,
+    data_hora: new Date(checkin.dataHora || Date.now()).toISOString(),
+    atualizado_em: new Date().toISOString()
+  };
+
+  const { error } = await supabaseClient
+    .from("treinos")
+    .upsert(payload, { onConflict: "id" });
+
+  if (error) {
+    console.warn("Erro ao sincronizar treino na nuvem:", error.message);
+    return false;
+  }
+
+  if (checkin.id) {
+    await db.checkins.update(checkin.id, { uid, sincronizado: 1 });
+  }
+  return true;
+}
+
+async function sincronizarPendentesNuvem(gymId) {
+  if (!supabaseClient || !navigator.onLine || !gymId) return;
+
+  const alunosPendentes = await db.alunos
+    .filter(a => a.gymId === gymId && a.sincronizado !== 1)
+    .toArray();
+  for (const aluno of alunosPendentes) {
+    await enviarAlunoParaNuvem(aluno);
+  }
+
+  const pagamentosPendentes = await db.pagamentos
+    .filter(p => p.gymId === gymId && p.sincronizado !== 1)
+    .toArray();
+  for (const pag of pagamentosPendentes) {
+    await enviarPagamentoParaNuvem(pag);
+  }
+
+  const checkinsPendentes = await db.checkins
+    .filter(c => c.gymId === gymId && c.sincronizado !== 1)
+    .toArray();
+  for (const chk of checkinsPendentes) {
+    await enviarCheckinParaNuvem(chk);
+  }
+}
+
+async function puxarDadosContaDaNuvem(gymId) {
+  if (!supabaseClient || !navigator.onLine || !gymId) return;
+
+  await sincronizarPendentesNuvem(gymId);
+
+  const [resAlunos, resPagamentos, resTreinos] = await Promise.all([
+    supabaseClient.from("alunos").select("*").eq("gym_id", gymId),
+    supabaseClient.from("pagamentos").select("*").eq("gym_id", gymId),
+    supabaseClient.from("treinos").select("*").eq("gym_id", gymId)
+  ]);
+
+  const mapaAlunoUidParaLocalId = new Map();
+
+  if (!resAlunos.error && Array.isArray(resAlunos.data)) {
+    const locaisAlunos = await db.alunos.filter(a => a.gymId === gymId).toArray();
+    const porUid = new Map(locaisAlunos.filter(a => a.uid).map(a => [a.uid, a]));
+
+    for (const rem of resAlunos.data) {
+      const expiraMs = rem.validade
+        ? new Date(`${String(rem.validade).slice(0, 10)}T23:59:59`).getTime()
+        : Date.now();
+      const criadoMs = rem.criado_em ? new Date(rem.criado_em).getTime() : Date.now();
+
+      const existente = porUid.get(rem.id);
+      if (existente) {
+        await db.alunos.update(existente.id, {
+          uid: rem.id,
+          gymId,
+          nome: rem.nome,
+          telefone: rem.telefone || "",
+          plano: rem.plano || "mensal",
+          dataExpiracao: expiraMs,
+          sincronizado: 1
+        });
+        mapaAlunoUidParaLocalId.set(rem.id, existente.id);
+      } else {
+        const novoId = await db.alunos.add({
+          uid: rem.id,
+          gymId,
+          nome: rem.nome,
+          telefone: rem.telefone || "",
+          plano: rem.plano || "mensal",
+          dataCadastro: criadoMs,
+          dataExpiracao: expiraMs,
+          sincronizado: 1
+        });
+        mapaAlunoUidParaLocalId.set(rem.id, novoId);
+      }
+    }
+  }
+
+  const todosAlunosGym = await db.alunos.filter(a => a.gymId === gymId).toArray();
+  const mapaNomeAluno = new Map(todosAlunosGym.map(a => [a.uid, a]));
+
+  if (!resPagamentos.error && Array.isArray(resPagamentos.data)) {
+    const locaisPag = await db.pagamentos.filter(p => p.gymId === gymId).toArray();
+    const porUid = new Map(locaisPag.filter(p => p.uid).map(p => [p.uid, p]));
+
+    for (const rem of resPagamentos.data) {
+      const dataMs = rem.data_pagamento ? new Date(rem.data_pagamento).getTime() : Date.now();
+      const alunoRef = rem.aluno_id ? mapaNomeAluno.get(rem.aluno_id) : null;
+      const alunoLocalId = rem.aluno_id ? (mapaAlunoUidParaLocalId.get(rem.aluno_id) || null) : null;
+
+      const existente = porUid.get(rem.id);
+      if (existente) {
+        await db.pagamentos.update(existente.id, {
+          uid: rem.id,
+          gymId,
+          alunoUid: rem.aluno_id || null,
+          alunoId: alunoLocalId,
+          alunoNome: alunoRef?.nome || existente.alunoNome || "Aluno",
+          plano: alunoRef?.plano || existente.plano || "mensal",
+          valor: Number(rem.valor || 0),
+          metodo: rem.metodo || "Dinheiro",
+          dataHora: dataMs,
+          sincronizado: 1
+        });
+      } else {
+        await db.pagamentos.add({
+          uid: rem.id,
+          gymId,
+          alunoUid: rem.aluno_id || null,
+          alunoId: alunoLocalId,
+          alunoNome: alunoRef?.nome || "Aluno",
+          plano: alunoRef?.plano || "mensal",
+          valor: Number(rem.valor || 0),
+          metodo: rem.metodo || "Dinheiro",
+          dataHora: dataMs,
+          sincronizado: 1
+        });
+      }
+    }
+  }
+
+  if (!resTreinos.error && Array.isArray(resTreinos.data)) {
+    const locaisChk = await db.checkins.filter(c => c.gymId === gymId).toArray();
+    const porUid = new Map(locaisChk.filter(c => c.uid).map(c => [c.uid, c]));
+
+    for (const rem of resTreinos.data) {
+      const dataMs = rem.data_hora ? new Date(rem.data_hora).getTime() : Date.now();
+      const alunoLocalId = rem.aluno_id ? (mapaAlunoUidParaLocalId.get(rem.aluno_id) || null) : null;
+
+      const existente = porUid.get(rem.id);
+      if (existente) {
+        await db.checkins.update(existente.id, {
+          uid: rem.id,
+          gymId,
+          alunoUid: rem.aluno_id || null,
+          alunoId: alunoLocalId,
+          alunoNome: rem.nome_aluno || existente.alunoNome || "Aluno",
+          plano: rem.plano || existente.plano || null,
+          dataHora: dataMs,
+          sincronizado: 1
+        });
+      } else {
+        await db.checkins.add({
+          uid: rem.id,
+          gymId,
+          alunoUid: rem.aluno_id || null,
+          alunoId: alunoLocalId,
+          alunoNome: rem.nome_aluno || "Aluno",
+          plano: rem.plano || null,
+          dataHora: dataMs,
+          sincronizado: 1
+        });
+      }
+    }
+  }
+}
+
+window.addEventListener("online", async () => {
+  const academia = await db.config.get("academia_principal");
+  if (academia?.gymId) {
+    await sincronizarLicencaNuvem(academia);
+    await puxarDadosContaDaNuvem(academia.gymId);
+    if (typeof atualizarTudo === "function") {
+      await atualizarTudo();
+    }
+  }
+});
 
 // Sincroniza a licença da academia a partir da nuvem (Supabase) quando online
 async function sincronizarLicencaNuvem(academiaLocal) {
@@ -98,51 +424,58 @@ async function sincronizarLicencaNuvem(academiaLocal) {
 
 // 2. FUNÇÃO PRINCIPAL QUE ARRANCA QUANDO O APP ABRE
 async function iniciarApp() {
-  const elMpesa = document.getElementById("info-mpesa");
-  const elEmola = document.getElementById("info-emola");
-  if (elMpesa) elMpesa.textContent = NUMERO_MPESA_ADMIN;
-  if (elEmola) elEmola.textContent = NUMERO_EMOLA_ADMIN;
+  try {
+    const elMpesa = document.getElementById("info-mpesa");
+    const elEmola = document.getElementById("info-emola");
+    if (elMpesa) elMpesa.textContent = NUMERO_MPESA_ADMIN;
+    if (elEmola) elEmola.textContent = NUMERO_EMOLA_ADMIN;
 
-  let academia = await db.config.get("academia_principal");
+    let academia = await db.config.get("academia_principal");
 
-  if (!academia) {
+    if (!academia) {
+      mostrarTela("tela-cadastro-academia");
+      alternarAbaAuth("signup");
+      return;
+    }
+
+    const sessaoAtiva = localStorage.getItem(CHAVE_SESSAO_LOCAL);
+    if (sessaoAtiva !== academia.gymId) {
+      mostrarTela("tela-cadastro-academia");
+      alternarAbaAuth("login");
+      const inputLogin = document.getElementById("login-identificador");
+      if (inputLogin && academia.telefone) inputLogin.value = academia.telefone;
+      return;
+    }
+
+    academia = await sincronizarLicencaNuvem(academia);
+    await puxarDadosContaDaNuvem(academia.gymId);
+
+    const agora = Date.now();
+    if (academia.ultimoAcesso && agora < academia.ultimoAcesso) {
+      alert("Erro de data/hora detetado no dispositivo! Por favor, acerta o relógio do aparelho.");
+      mostrarBloqueio(academia);
+      return;
+    }
+
+    await db.config.update("academia_principal", { ultimoAcesso: agora });
+
+    const msPorDia = 1000 * 60 * 60 * 24;
+    const diasRestantes = Math.ceil((academia.licencaExpiraEm - agora) / msPorDia);
+
+    if (diasRestantes <= 0) {
+      mostrarBloqueio(academia);
+    } else {
+      abrirPainelPrincipal(academia, diasRestantes);
+    }
+  } catch (err) {
+    console.error("Erro ao iniciar GymControl:", err);
     mostrarTela("tela-cadastro-academia");
     alternarAbaAuth("signup");
-    return;
-  }
-
-  const sessaoAtiva = localStorage.getItem(CHAVE_SESSAO_LOCAL);
-  if (sessaoAtiva !== academia.gymId) {
-    mostrarTela("tela-cadastro-academia");
-    alternarAbaAuth("login");
-    const inputLogin = document.getElementById("login-identificador");
-    if (inputLogin && academia.telefone) inputLogin.value = academia.telefone;
-    return;
-  }
-
-  academia = await sincronizarLicencaNuvem(academia);
-
-  const agora = Date.now();
-  if (agora < academia.ultimoAcesso) {
-    alert("Erro de data/hora detetado no dispositivo! Por favor, acerta o relógio do aparelho.");
-    mostrarBloqueio(academia);
-    return;
-  }
-
-  await db.config.update("academia_principal", { ultimoAcesso: agora });
-
-  const msPorDia = 1000 * 60 * 60 * 24;
-  const diasRestantes = Math.ceil((academia.licencaExpiraEm - agora) / msPorDia);
-
-  if (diasRestantes <= 0) {
-    mostrarBloqueio(academia);
-  } else {
-    abrirPainelPrincipal(academia, diasRestantes);
   }
 }
 
-// 3A. LOGIN (Verifica na nuvem se disponível e guarda sessão local)
-document.getElementById("form-login").addEventListener("submit", async (e) => {
+// 3A. LOGIN (Verifica na nuvem se disponível, restaura dados da conta e guarda sessão local)
+document.getElementById("form-login")?.addEventListener("submit", async (e) => {
   e.preventDefault();
 
   const identificadorDigitado = normalizarTelefone(document.getElementById("login-identificador").value);
@@ -172,7 +505,9 @@ document.getElementById("form-login").addEventListener("submit", async (e) => {
     }
 
     const localAtual = await db.config.get("academia_principal");
+    const trocouDeConta = localAtual && localAtual.gymId && localAtual.gymId !== contaRemota.gym_id;
     const agora = Date.now();
+
     const registroLocal = {
       id: "academia_principal",
       gymId: contaRemota.gym_id,
@@ -180,15 +515,21 @@ document.getElementById("form-login").addEventListener("submit", async (e) => {
       responsavel: contaRemota.responsavel,
       telefone: contaRemota.telefone,
       senhaHash: contaRemota.senha_hash,
-      criadoEm: localAtual?.criadoEm || new Date(contaRemota.criado_em).getTime(),
+      criadoEm: trocouDeConta
+        ? new Date(contaRemota.criado_em).getTime()
+        : (localAtual?.criadoEm || new Date(contaRemota.criado_em).getTime()),
       ultimoAcesso: agora,
       licencaExpiraEm: new Date(contaRemota.licenca_expira_em).getTime(),
-      chavesUsadas: localAtual?.chavesUsadas || [],
-      precos: localAtual?.precos || { diario: 100, semanal: 500, mensal: 1500 }
+      chavesUsadas: trocouDeConta ? [] : (localAtual?.chavesUsadas || []),
+      precos: trocouDeConta
+        ? { diario: 100, semanal: 500, mensal: 1500 }
+        : (localAtual?.precos || { diario: 100, semanal: 500, mensal: 1500 })
     };
 
     await db.config.put(registroLocal);
     localStorage.setItem(CHAVE_SESSAO_LOCAL, contaRemota.gym_id);
+    await puxarDadosContaDaNuvem(contaRemota.gym_id);
+
     document.getElementById("form-login").reset();
     iniciarApp();
     return;
@@ -217,7 +558,7 @@ document.getElementById("form-login").addEventListener("submit", async (e) => {
 });
 
 // 3B. SIGN UP (Anti-burla: bloqueia 2.º trial gratuito para o mesmo telefone na nuvem)
-document.getElementById("form-academia").addEventListener("submit", async (e) => {
+document.getElementById("form-academia")?.addEventListener("submit", async (e) => {
   e.preventDefault();
 
   const nome = document.getElementById("gym-nome").value.trim();
@@ -239,7 +580,7 @@ document.getElementById("form-academia").addEventListener("submit", async (e) =>
     }
 
     if (trialExistente) {
-      exibirErroAuth("Este número já utilizou o mês gratuito de teste. Faz login ou renova por 10 MT.");
+      exibirErroAuth(`Este número já utilizou o mês gratuito de teste. Faz login ou envia ${VALOR_RENOVACAO_MT} MT para renovar.`);
       return;
     }
 
@@ -322,6 +663,7 @@ document.getElementById("form-academia").addEventListener("submit", async (e) =>
   iniciarApp();
 });
 
+// Termina apenas a sessão ativa sem apagar alunos, pagamentos ou check-ins guardados
 function terminarSessao() {
   localStorage.removeItem(CHAVE_SESSAO_LOCAL);
   if (typeof toggleMenuLateral === "function") toggleMenuLateral(false);
@@ -329,7 +671,7 @@ function terminarSessao() {
 }
 
 // 4. PREÇOS DA ACADEMIA
-document.getElementById("form-precos").addEventListener("submit", async (e) => {
+document.getElementById("form-precos")?.addEventListener("submit", async (e) => {
   e.preventDefault();
   const diario = parseFloat(document.getElementById("preco-diario").value);
   const semanal = parseFloat(document.getElementById("preco-semanal").value);
@@ -360,76 +702,53 @@ function atualizarInterfacePrecos(academia) {
   }
 }
 
-// 5. RENOVAÇÃO DE 10 MT (M-PESA / E-MOLA) VIA SUPABASE OU CHAVE OFFLINE
-document.getElementById("form-ativar-licenca").addEventListener("submit", async (e) => {
+// 5. ATIVAÇÃO DE LICENÇA VIA CHAVE SHA-256 (+30 DIAS)
+document.getElementById("form-ativar-licenca")?.addEventListener("submit", async (e) => {
   e.preventDefault();
-  const metodo = document.getElementById("select-metodo-renovacao").value;
   const codigoInput = document.getElementById("input-chave-licenca").value.trim().toUpperCase();
   const academia = await db.config.get("academia_principal");
+  if (!academia) return;
 
-  if (!codigoInput || codigoInput.length < 4) {
-    exibirErroChave("Introduz um código de transação válido.");
+  if (!codigoInput || !codigoInput.includes("-")) {
+    exibirErroChave("Introduz uma chave válida no formato LOTE-CÓDIGO (ex: MES01-A1B2C3).");
     return;
   }
 
-  // Se for chave mestre offline válida
   const chaveOfflineValida = await verificarChaveOffline(academia.gymId, codigoInput);
-  if (chaveOfflineValida) {
-    if (academia.chavesUsadas && academia.chavesUsadas.includes(codigoInput)) {
-      exibirErroChave("Esta chave já foi utilizada anteriormente.");
-      return;
-    }
-    const agora = Date.now();
-    const mais30Dias = 30 * 24 * 60 * 60 * 1000;
-    const novasChaves = [...(academia.chavesUsadas || []), codigoInput];
-
-    await db.config.update("academia_principal", {
-      licencaExpiraEm: agora + mais30Dias,
-      ultimoAcesso: agora,
-      chavesUsadas: novasChaves
-    });
-
-    if (supabaseClient && navigator.onLine) {
-      await supabaseClient
-        .from("academias")
-        .update({ licenca_expira_em: new Date(agora + mais30Dias).toISOString() })
-        .eq("gym_id", academia.gymId);
-    }
-
-    alert("Licença renovada com sucesso por mais 30 dias!");
-    iniciarApp();
+  if (!chaveOfflineValida) {
+    exibirErroChave("Chave inválida para este ID de ginásio. Confere o ID e tenta novamente.");
     return;
   }
 
-  // Regista pedido de renovação de 10 MT na tabela renovacoes_licenca do Supabase
+  if (academia.chavesUsadas && academia.chavesUsadas.includes(codigoInput)) {
+    exibirErroChave("Esta chave já foi utilizada anteriormente.");
+    return;
+  }
+
+  const agora = Date.now();
+  const mais30Dias = 30 * 24 * 60 * 60 * 1000;
+  const novasChaves = [...(academia.chavesUsadas || []), codigoInput];
+
+  await db.config.update("academia_principal", {
+    licencaExpiraEm: agora + mais30Dias,
+    ultimoAcesso: agora,
+    chavesUsadas: novasChaves
+  });
+
   if (supabaseClient && navigator.onLine) {
-    const { error } = await supabaseClient
-      .from("renovacoes_licenca")
-      .insert({
-        gym_id: academia.gymId,
-        telefone: academia.telefone,
-        metodo: metodo,
-        codigo_transacao: codigoInput,
-        valor: VALOR_RENOVACAO_MT,
-        status: "pendente"
-      });
-
-    if (error) {
-      exibirErroChave("Este código de transação já foi submetido ou é inválido.");
-      return;
-    }
-
-    exibirErroChave(
-      `Comprovativo de ${VALOR_RENOVACAO_MT} MT (${metodo}) registado! Assim que o pagamento for confirmado, a tua licença de +30 dias será ativada.`
-    );
-    return;
+    await supabaseClient
+      .from("academias")
+      .update({ licenca_expira_em: new Date(agora + mais30Dias).toISOString() })
+      .eq("gym_id", academia.gymId);
   }
 
-  exibirErroChave("Liga-te à internet para submeter o pagamento de 10 MT ou insere uma chave válida.");
+  document.getElementById("form-ativar-licenca").reset();
+  alert("Licença renovada com sucesso por mais 30 dias!");
+  iniciarApp();
 });
 
-// 6. NOVO ALUNO & CAIXA
-document.getElementById("form-novo-aluno").addEventListener("submit", async (e) => {
+// 6. NOVO ALUNO & CAIXA (Grava local e sincroniza na nuvem)
+document.getElementById("form-novo-aluno")?.addEventListener("submit", async (e) => {
   e.preventDefault();
   const nome = document.getElementById("aluno-nome").value.trim();
   const telefone = document.getElementById("aluno-telefone").value.trim();
@@ -437,7 +756,8 @@ document.getElementById("form-novo-aluno").addEventListener("submit", async (e) 
   const metodoPagamento = document.getElementById("pagamento-metodo").value;
 
   const academia = await db.config.get("academia_principal");
-  const precos = academia.precos || { diario: 100, semanal: 500, mensal: 1500 };
+  const gymId = academia?.gymId || "";
+  const precos = academia?.precos || { diario: 100, semanal: 500, mensal: 1500 };
 
   let valorPago = precos.mensal;
   let diasAdicionais = 30;
@@ -447,25 +767,40 @@ document.getElementById("form-novo-aluno").addEventListener("submit", async (e) 
   const agora = Date.now();
   const msPorDia = 24 * 60 * 60 * 1000;
   const dataExpiracao = agora + (diasAdicionais * msPorDia);
+  const alunoUid = gerarUidUnico("aluno");
+  const pagamentoUid = gerarUidUnico("pag");
 
   const alunoId = await db.alunos.add({
+    uid: alunoUid,
+    gymId,
     nome,
     telefone,
     plano,
     dataCadastro: agora,
-    dataExpiracao
+    dataExpiracao,
+    sincronizado: 0
   });
 
-  await db.pagamentos.add({
+  const pagamentoId = await db.pagamentos.add({
+    uid: pagamentoUid,
+    gymId,
+    alunoUid,
     alunoId,
     alunoNome: nome,
     plano,
     valor: valorPago,
     metodo: metodoPagamento,
-    dataHora: agora
+    dataHora: agora,
+    sincronizado: 0
   });
 
+  const alunoSalvo = await db.alunos.get(alunoId);
+  const pagamentoSalvo = await db.pagamentos.get(pagamentoId);
+  await enviarAlunoParaNuvem(alunoSalvo);
+  await enviarPagamentoParaNuvem(pagamentoSalvo, alunoUid);
+
   document.getElementById("form-novo-aluno").reset();
+  alternarFormAluno(false);
   atualizarTudo();
   alert(`Aluno ${nome} cadastrado com sucesso! Pagamento de ${valorPago.toLocaleString("pt-MZ")} MT registado.`);
 });
@@ -475,11 +810,23 @@ async function atualizarTudo() {
   await carregarAlunosEstatisticasCaixa();
   await carregarCheckinsHoje();
   await carregarRelatoriosFinanceiros();
+  await carregarHistoricoTreinos();
 }
 
 async function carregarAlunosEstatisticasCaixa() {
-  const alunos = await db.alunos.toArray();
-  const pagamentos = await db.pagamentos.toArray();
+  const academia = await db.config.get("academia_principal");
+  const gymIdAtual = academia?.gymId;
+
+  const todosAlunos = await db.alunos.toArray();
+  const todosPagamentos = await db.pagamentos.toArray();
+
+  const alunos = gymIdAtual
+    ? todosAlunos.filter(a => !a.gymId || a.gymId === gymIdAtual)
+    : todosAlunos;
+  const pagamentos = gymIdAtual
+    ? todosPagamentos.filter(p => !p.gymId || p.gymId === gymIdAtual)
+    : todosPagamentos;
+
   const corpoTabela = document.getElementById("tabela-alunos-corpo");
   if (!corpoTabela) return;
 
@@ -512,7 +859,7 @@ async function carregarAlunosEstatisticasCaixa() {
         <td class="p-3 font-medium text-white">${pag.alunoNome || "Aluno"}</td>
         <td class="p-3 capitalize text-slate-300">${pag.plano}</td>
         <td class="p-3 text-slate-300">${pag.metodo}</td>
-        <td class="p-3 text-right font-semibold text-emerald-400">${pag.valor.toLocaleString("pt-MZ")} MT</td>
+        <td class="p-3 text-right font-semibold text-teal-400">${pag.valor.toLocaleString("pt-MZ")} MT</td>
       `;
       corpoPagamentos.appendChild(trPag);
     }
@@ -526,7 +873,7 @@ async function carregarAlunosEstatisticasCaixa() {
   if (boxResumoMetodos) {
     boxResumoMetodos.innerHTML = Object.entries(totaisPorMetodo)
       .filter(([_, valor]) => valor > 0)
-      .map(([metodo, valor]) => `<span class="bg-slate-950 border border-slate-800 px-2.5 py-1 rounded-lg text-slate-300">${metodo}: <strong class="text-emerald-400">${valor.toLocaleString("pt-MZ")} MT</strong></span>`)
+      .map(([metodo, valor]) => `<span class="bg-[#04090e] border border-slate-800 px-2.5 py-1 rounded-lg text-slate-300">${metodo}: <strong class="text-teal-400">${valor.toLocaleString("pt-MZ")} MT</strong></span>`)
       .join("");
   }
 
@@ -534,7 +881,7 @@ async function carregarAlunosEstatisticasCaixa() {
   if (elemCaixa) elemCaixa.textContent = `${totalCaixaHoje.toLocaleString("pt-MZ")} MT`;
 
   if (alunos.length === 0) {
-    corpoTabela.innerHTML = `<tr><td colspan="6" class="p-4 text-center text-slate-500">Nenhum aluno cadastrado ainda.</td></tr>`;
+    corpoTabela.innerHTML = `<tr><td colspan="6" class="p-4 text-center text-slate-500">Nenhum aluno cadastrado ainda. Clica no botão + para registar.</td></tr>`;
     document.getElementById("stat-total-alunos").textContent = "0";
     document.getElementById("stat-expiram-breve").textContent = "0";
     return;
@@ -552,11 +899,11 @@ async function carregarAlunosEstatisticasCaixa() {
     if (filtroAtualAlunos === "expirados" && !expirado) return;
 
     const dataFormatada = new Date(aluno.dataExpiracao).toLocaleDateString("pt-MZ");
-    let badgeStatus = expirado
-      ? `<span class="bg-red-500/20 text-red-400 text-xs px-2.5 py-1 rounded-full border border-red-500/30 font-semibold">Expirado</span>`
+    const badgeStatus = expirado
+      ? `<span class="bg-rose-500/20 text-rose-400 text-xs px-2.5 py-1 rounded-full border border-rose-500/30 font-semibold">Expirado</span>`
       : prestesAExpirar
       ? `<span class="bg-amber-500/20 text-amber-300 text-xs px-2.5 py-1 rounded-full border border-amber-500/30 font-semibold">Expira em breve</span>`
-      : `<span class="bg-emerald-500/20 text-emerald-300 text-xs px-2.5 py-1 rounded-full border border-emerald-500/30">Ativo</span>`;
+      : `<span class="bg-teal-500/20 text-teal-300 text-xs px-2.5 py-1 rounded-full border border-teal-500/30">Ativo</span>`;
 
     const linha = document.createElement("tr");
     linha.innerHTML = `
@@ -566,8 +913,8 @@ async function carregarAlunosEstatisticasCaixa() {
       <td class="p-3 text-slate-300">${dataFormatada}</td>
       <td class="p-3">${badgeStatus}</td>
       <td class="p-3 text-right">
-        <button onclick="abrirModalRenovacao(${aluno.id}, '${aluno.nome.replace(/'/g, "\\'")}')" 
-                class="bg-slate-800 hover:bg-emerald-500 hover:text-slate-950 text-slate-200 text-xs font-semibold px-3 py-1.5 rounded-lg transition">
+        <button onclick="abrirModalRenovacao(${aluno.id}, '${aluno.nome.replace(/'/g, "\\'")}')"
+                class="bg-[#12222f] hover:bg-teal-400 hover:text-slate-950 text-slate-200 text-xs font-semibold px-3 py-1.5 rounded-xl transition">
           Renovar
         </button>
       </td>
@@ -585,8 +932,8 @@ function filtrarAlunos(tipo) {
     const btn = document.getElementById(`filtro-${t}`);
     if (btn) {
       btn.className = t === tipo
-        ? "px-3 py-1.5 rounded-lg bg-emerald-500 text-slate-950 font-bold transition"
-        : "px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-slate-300 hover:bg-slate-800 transition";
+        ? "px-3.5 py-1.5 rounded-full bg-teal-400 text-slate-950 font-extrabold transition"
+        : "px-3.5 py-1.5 rounded-full bg-[#04090e] border border-slate-800 text-slate-300 hover:bg-[#12222f] transition";
     }
   });
   carregarAlunosEstatisticasCaixa();
@@ -595,7 +942,7 @@ function filtrarAlunos(tipo) {
 // 8. MODAL DE RENOVAÇÃO DE PLANO DO ALUNO
 async function abrirModalRenovacao(alunoId, nomeAluno) {
   const academia = await db.config.get("academia_principal");
-  const precos = academia.precos || { diario: 100, semanal: 500, mensal: 1500 };
+  const precos = academia?.precos || { diario: 100, semanal: 500, mensal: 1500 };
   document.getElementById("modal-aluno-id").value = alunoId;
   document.getElementById("modal-aluno-nome").textContent = `Aluno: ${nomeAluno}`;
   document.getElementById("modal-plano-select").innerHTML = `
@@ -610,15 +957,18 @@ function fecharModalRenovacao() {
   document.getElementById("modal-renovacao").classList.add("hidden");
 }
 
-document.getElementById("form-renovar-aluno").addEventListener("submit", async (e) => {
+document.getElementById("form-renovar-aluno")?.addEventListener("submit", async (e) => {
   e.preventDefault();
   const alunoId = parseInt(document.getElementById("modal-aluno-id").value);
   const plano = document.getElementById("modal-plano-select").value;
   const metodo = document.getElementById("modal-metodo-select").value;
 
   const aluno = await db.alunos.get(alunoId);
+  if (!aluno) return;
+
   const academia = await db.config.get("academia_principal");
-  const precos = academia.precos || { diario: 100, semanal: 500, mensal: 1500 };
+  const gymId = aluno.gymId || academia?.gymId || "";
+  const precos = academia?.precos || { diario: 100, semanal: 500, mensal: 1500 };
 
   let valorPago = precos.mensal;
   let diasAdicionais = 30;
@@ -629,20 +979,38 @@ document.getElementById("form-renovar-aluno").addEventListener("submit", async (
   const msPorDia = 24 * 60 * 60 * 1000;
   const baseCalculo = aluno.dataExpiracao > agora ? aluno.dataExpiracao : agora;
   const novaExpiracao = baseCalculo + (diasAdicionais * msPorDia);
+  const alunoUid = aluno.uid || gerarUidUnico("aluno");
+  const pagamentoUid = gerarUidUnico("pag");
 
-  await db.alunos.update(alunoId, { plano, dataExpiracao: novaExpiracao });
-  await db.pagamentos.add({
+  await db.alunos.update(alunoId, {
+    uid: alunoUid,
+    gymId,
+    plano,
+    dataExpiracao: novaExpiracao,
+    sincronizado: 0
+  });
+
+  const pagamentoId = await db.pagamentos.add({
+    uid: pagamentoUid,
+    gymId,
+    alunoUid,
     alunoId,
     alunoNome: aluno.nome,
     plano,
     valor: valorPago,
     metodo,
-    dataHora: agora
+    dataHora: agora,
+    sincronizado: 0
   });
+
+  const alunoAtualizado = await db.alunos.get(alunoId);
+  const pagamentoSalvo = await db.pagamentos.get(pagamentoId);
+  await enviarAlunoParaNuvem(alunoAtualizado);
+  await enviarPagamentoParaNuvem(pagamentoSalvo, alunoUid);
 
   fecharModalRenovacao();
   atualizarTudo();
-  alert(`✅ Plano renovado com sucesso para ${aluno.nome}! (+${valorPago.toLocaleString("pt-MZ")} MT no caixa)`);
+  alert(`Plano renovado com sucesso para ${aluno.nome}! (+${valorPago.toLocaleString("pt-MZ")} MT no caixa)`);
 });
 
 // 9. VALIDAÇÃO DE CHAVE OFFLINE
@@ -663,14 +1031,17 @@ async function verificarChaveOffline(gymId, chave) {
 
 // 10. TELAS E BLOQUEIO
 function mostrarTela(idTela) {
-  document.getElementById("tela-cadastro-academia").classList.add("hidden");
-  document.getElementById("tela-bloqueio").classList.add("hidden");
-  document.getElementById("painel-principal").classList.add("hidden");
-  document.getElementById(idTela).classList.remove("hidden");
+  ["tela-cadastro-academia", "tela-bloqueio", "painel-principal"].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.classList.add("hidden");
+  });
+  const alvo = document.getElementById(idTela);
+  if (alvo) alvo.classList.remove("hidden");
 }
 
 function mostrarBloqueio(academia) {
-  document.getElementById("bloqueio-gym-id").textContent = academia.gymId;
+  const elGymId = document.getElementById("bloqueio-gym-id");
+  if (elGymId) elGymId.textContent = academia.gymId;
   mostrarTela("tela-bloqueio");
 }
 
@@ -682,7 +1053,7 @@ function abrirPainelPrincipal(academia, diasRestantes) {
   badge.textContent = `${diasRestantes} ${diasRestantes === 1 ? "dia restante" : "dias restantes"}`;
   badge.className = diasRestantes <= 5
     ? "bg-amber-500/15 text-amber-300 text-[11px] font-bold px-2.5 py-1 rounded-full border border-amber-500/30"
-    : "bg-emerald-500/15 text-emerald-300 text-[11px] font-bold px-2.5 py-1 rounded-full border border-emerald-500/30";
+    : "bg-teal-500/15 text-teal-300 text-[11px] font-bold px-2.5 py-1 rounded-full border border-teal-500/30";
 
   mostrarTela("painel-principal");
   atualizarInterfacePrecos(academia);
@@ -691,14 +1062,27 @@ function abrirPainelPrincipal(academia, diasRestantes) {
 
 function exibirErroChave(msg) {
   const el = document.getElementById("msg-erro-chave");
+  if (!el) return;
   el.textContent = msg;
   el.classList.remove("hidden");
 }
 
 async function simularExpiracao() {
+  const academia = await db.config.get("academia_principal");
+  if (!academia) return;
+
   const ontem = Date.now() - (24 * 60 * 60 * 1000);
   await db.config.update("academia_principal", { licencaExpiraEm: ontem });
-  iniciarApp();
+
+  if (supabaseClient && navigator.onLine) {
+    await supabaseClient
+      .from("academias")
+      .update({ licenca_expira_em: new Date(ontem).toISOString() })
+      .eq("gym_id", academia.gymId);
+  }
+
+  if (typeof toggleMenuLateral === "function") toggleMenuLateral(false);
+  mostrarBloqueio(academia);
 }
 
 // 11. CHECK-IN RÁPIDO
@@ -709,13 +1093,20 @@ if (inputPesquisa) {
   inputPesquisa.addEventListener("input", async (e) => {
     const termo = e.target.value.trim().toLowerCase();
     if (!termo.length) {
-      boxResultados.classList.add("hidden");
-      boxResultados.innerHTML = "";
+      boxResultados?.classList.add("hidden");
+      if (boxResultados) boxResultados.innerHTML = "";
       return;
     }
 
-    const alunos = await db.alunos.toArray();
+    const academia = await db.config.get("academia_principal");
+    const gymIdAtual = academia?.gymId;
+    const todosAlunos = await db.alunos.toArray();
+    const alunos = gymIdAtual
+      ? todosAlunos.filter(a => !a.gymId || a.gymId === gymIdAtual)
+      : todosAlunos;
+
     const filtrados = alunos.filter(a => a.nome.toLowerCase().includes(termo));
+    if (!boxResultados) return;
     boxResultados.innerHTML = "";
 
     if (!filtrados.length) {
@@ -727,11 +1118,11 @@ if (inputPesquisa) {
     filtrados.forEach(aluno => {
       const expirado = aluno.dataExpiracao < Date.now();
       const dataFormatada = new Date(aluno.dataExpiracao).toLocaleDateString("pt-MZ");
-      const statusTexto = expirado ? "EXPIRADO ❌" : "ATIVO ✅";
-      const corStatus = expirado ? "text-red-400 bg-red-500/10" : "text-emerald-400 bg-emerald-500/10";
+      const statusTexto = expirado ? "EXPIRADO" : "ATIVO";
+      const corStatus = expirado ? "text-rose-400 bg-rose-500/10" : "text-teal-400 bg-teal-500/10";
 
       const item = document.createElement("div");
-      item.className = "p-3 hover:bg-slate-800/80 flex justify-between items-center cursor-pointer transition gap-2";
+      item.className = "p-3 hover:bg-[#12222f] flex justify-between items-center cursor-pointer transition gap-2";
       item.innerHTML = `
         <div>
           <p class="font-medium text-white text-sm">${aluno.nome}</p>
@@ -739,8 +1130,8 @@ if (inputPesquisa) {
         </div>
         <div class="flex items-center gap-3 shrink-0">
           <span class="text-xs px-2.5 py-1 rounded font-semibold ${corStatus}">${statusTexto}</span>
-          <button onclick="realizarCheckin(${aluno.id}, '${aluno.nome.replace(/'/g, "\\'")}', ${expirado})" 
-                  class="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold px-3 py-1.5 rounded-lg text-xs transition">
+          <button onclick="realizarCheckin(${aluno.id}, '${aluno.nome.replace(/'/g, "\\'")}', ${expirado})"
+                  class="bg-teal-400 hover:bg-teal-300 text-slate-950 font-bold px-3 py-1.5 rounded-xl text-xs transition">
             Fazer Check-in
           </button>
         </div>
@@ -754,18 +1145,46 @@ if (inputPesquisa) {
 
 async function realizarCheckin(alunoId, nomeAluno, expirado) {
   if (expirado) {
-    alert(`⚠️ ATENÇÃO: A mensalidade de ${nomeAluno} está EXPIRADA!`);
+    alert(`ATENÇÃO: A mensalidade de ${nomeAluno} está EXPIRADA!`);
     return;
   }
-  await db.checkins.add({ alunoId, alunoNome: nomeAluno, dataHora: Date.now() });
+
+  const academia = await db.config.get("academia_principal");
+  const aluno = await db.alunos.get(alunoId);
+  const gymId = aluno?.gymId || academia?.gymId || "";
+  const alunoUid = aluno?.uid || null;
+  const agora = Date.now();
+  const checkinUid = gerarUidUnico("chk");
+
+  const checkinId = await db.checkins.add({
+    uid: checkinUid,
+    gymId,
+    alunoUid,
+    alunoId,
+    alunoNome: nomeAluno,
+    plano: aluno?.plano || null,
+    dataHora: agora,
+    sincronizado: 0
+  });
+
+  const checkinSalvo = await db.checkins.get(checkinId);
+  await enviarCheckinParaNuvem(checkinSalvo, alunoUid);
+
   if (inputPesquisa) inputPesquisa.value = "";
   if (boxResultados) boxResultados.classList.add("hidden");
-  alert(`✅ Check-in registado com sucesso para ${nomeAluno}!`);
-  carregarCheckinsHoje();
+  alert(`Check-in registado com sucesso para ${nomeAluno}!`);
+  await carregarCheckinsHoje();
+  await carregarHistoricoTreinos();
 }
 
 async function carregarCheckinsHoje() {
-  const checkins = await db.checkins.toArray();
+  const academia = await db.config.get("academia_principal");
+  const gymIdAtual = academia?.gymId;
+  const todosCheckins = await db.checkins.toArray();
+  const checkins = gymIdAtual
+    ? todosCheckins.filter(c => !c.gymId || c.gymId === gymIdAtual)
+    : todosCheckins;
+
   const corpoCheckins = document.getElementById("tabela-checkins-hoje");
   if (!corpoCheckins) return;
   corpoCheckins.innerHTML = "";
@@ -784,7 +1203,7 @@ async function carregarCheckinsHoje() {
     tr.innerHTML = `
       <td class="p-3 text-slate-400 font-mono text-xs">${horaFormatada}</td>
       <td class="p-3 font-medium text-white">${chk.alunoNome || "Aluno"}</td>
-      <td class="p-3 text-right"><span class="bg-emerald-500/20 text-emerald-300 text-xs px-2.5 py-1 rounded-full border border-emerald-500/30">Entrada Autorizada</span></td>
+      <td class="p-3 text-right"><span class="bg-teal-500/20 text-teal-300 text-xs px-2.5 py-1 rounded-full border border-teal-500/30">Entrada Autorizada</span></td>
     `;
     corpoCheckins.appendChild(tr);
   });
@@ -800,7 +1219,7 @@ document.addEventListener("click", (e) => {
 async function exportarBackup() {
   try {
     const backupCompleto = {
-      versao: "1.0",
+      versao: "2.0",
       dataExportacao: new Date().toISOString(),
       config: await db.config.toArray(),
       alunos: await db.alunos.toArray(),
@@ -816,7 +1235,7 @@ async function exportarBackup() {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    alert("✅ Cópia de segurança (Backup) descarregada com sucesso!");
+    alert("Cópia de segurança (Backup) descarregada com sucesso!");
   } catch (err) {
     console.error(err);
     alert("Erro ao gerar o ficheiro de backup.");
@@ -824,85 +1243,353 @@ async function exportarBackup() {
 }
 
 async function importarBackup(event) {
-  const ficheiro = event.target.files[0];
+  const ficheiro = event.target.files?.[0];
   if (!ficheiro) return;
-  if (!confirm("⚠️ Restaurar um backup irá substituir os dados atuais pelos do ficheiro. Continuar?")) {
-    event.target.value = "";
-    return;
-  }
 
-  const leitor = new FileReader();
-  leitor.onload = async function(e) {
-    try {
-      const dados = JSON.parse(e.target.result);
-      if (!dados.config || !dados.alunos) throw new Error("Formato inválido");
+  try {
+    const texto = await ficheiro.text();
+    const dados = JSON.parse(texto);
+    const academiaAtual = await db.config.get("academia_principal");
+    const gymIdAtual = dados.config?.[0]?.gymId || academiaAtual?.gymId || "";
 
-      await db.transaction("rw", db.config, db.alunos, db.pagamentos, db.checkins, async () => {
-        await db.config.clear();
-        await db.alunos.clear();
-        await db.pagamentos.clear();
-        await db.checkins.clear();
-        if (dados.config.length) await db.config.bulkAdd(dados.config);
-        if (dados.alunos.length) await db.alunos.bulkAdd(dados.alunos);
-        if (dados.pagamentos.length) await db.pagamentos.bulkAdd(dados.pagamentos);
-        if (dados.checkins.length) await db.checkins.bulkAdd(dados.checkins);
-      });
-
-      alert("🔄 Dados restaurados com sucesso!");
-      location.reload();
-    } catch (err) {
-      console.error(err);
-      alert("❌ Ficheiro de backup inválido.");
+    if (Array.isArray(dados.config) && dados.config.length > 0) {
+      await db.config.bulkPut(dados.config);
     }
-  };
-  leitor.readAsText(ficheiro);
+
+    if (Array.isArray(dados.alunos)) {
+      for (const a of dados.alunos) {
+        const uid = a.uid || gerarUidUnico("aluno");
+        const registro = {
+          uid,
+          gymId: a.gymId || gymIdAtual,
+          nome: a.nome,
+          telefone: a.telefone || "",
+          plano: a.plano || "mensal",
+          dataCadastro: a.dataCadastro || Date.now(),
+          dataExpiracao: a.dataExpiracao || Date.now(),
+          sincronizado: 0
+        };
+        await db.alunos.add(registro);
+        await enviarAlunoParaNuvem({ ...registro, uid });
+      }
+    }
+
+    if (Array.isArray(dados.pagamentos)) {
+      for (const p of dados.pagamentos) {
+        const uid = p.uid || gerarUidUnico("pag");
+        const registro = {
+          uid,
+          gymId: p.gymId || gymIdAtual,
+          alunoUid: p.alunoUid || null,
+          alunoId: p.alunoId || null,
+          alunoNome: p.alunoNome || "Aluno",
+          plano: p.plano || "mensal",
+          valor: Number(p.valor || 0),
+          metodo: p.metodo || "Dinheiro",
+          dataHora: p.dataHora || Date.now(),
+          sincronizado: 0
+        };
+        await db.pagamentos.add(registro);
+        await enviarPagamentoParaNuvem(registro);
+      }
+    }
+
+    if (Array.isArray(dados.checkins)) {
+      for (const c of dados.checkins) {
+        const uid = c.uid || gerarUidUnico("chk");
+        const registro = {
+          uid,
+          gymId: c.gymId || gymIdAtual,
+          alunoUid: c.alunoUid || null,
+          alunoId: c.alunoId || null,
+          alunoNome: c.alunoNome || "Aluno",
+          plano: c.plano || null,
+          dataHora: c.dataHora || Date.now(),
+          sincronizado: 0
+        };
+        await db.checkins.add(registro);
+        await enviarCheckinParaNuvem(registro);
+      }
+    }
+
+    event.target.value = "";
+    alert("Backup restaurado e sincronizado com sucesso!");
+    await iniciarApp();
+  } catch (err) {
+    console.error("Erro ao importar backup:", err);
+    alert("Ficheiro de backup inválido ou corrompido.");
+  }
 }
 
-// 13. RELATÓRIOS FINANCEIROS
+// 13. RELATÓRIOS FINANCEIROS & HISTÓRICO DE TREINOS
+let periodoHistoricoTreinos = "diario";
+let ultimosCheckinsFiltrados = [];
+
 async function carregarRelatoriosFinanceiros() {
-  const pagamentos = await db.pagamentos.toArray();
-  const corpoHistorico = document.getElementById("tabela-historico-geral");
-  if (!corpoHistorico) return;
-  corpoHistorico.innerHTML = "";
+  const academia = await db.config.get("academia_principal");
+  const gymIdAtual = academia?.gymId;
+  const todosPagamentos = await db.pagamentos.toArray();
+
+  const pagamentos = gymIdAtual
+    ? todosPagamentos.filter(p => !p.gymId || p.gymId === gymIdAtual)
+    : todosPagamentos;
+
+  const agora = Date.now();
+  const seteDiasAtras = agora - (7 * 24 * 60 * 60 * 1000);
+  const dataAtual = new Date();
+  const inicioMes = new Date(dataAtual.getFullYear(), dataAtual.getMonth(), 1).getTime();
 
   let totalSemana = 0;
   let totalMes = 0;
-  const agora = Date.now();
-  const seteDiasAtras = agora - (7 * 24 * 60 * 60 * 1000);
-  const inicioMesAtual = new Date();
-  inicioMesAtual.setDate(1);
-  inicioMesAtual.setHours(0, 0, 0, 0);
-  const timestampInicioMes = inicioMesAtual.getTime();
 
-  const pagamentosOrdenados = pagamentos.sort((a, b) => b.dataHora - a.dataHora);
+  pagamentos.forEach((pag) => {
+    const ts = pag.dataHora || 0;
+    const valor = Number(pag.valor || 0);
+    if (ts >= seteDiasAtras) totalSemana += valor;
+    if (ts >= inicioMes) totalMes += valor;
+  });
 
-  if (!pagamentosOrdenados.length) {
-    corpoHistorico.innerHTML = `<tr><td colspan="5" class="p-4 text-center text-slate-500">Nenhum pagamento registado no histórico.</td></tr>`;
-    document.getElementById("relatorio-total-semana").textContent = "0,00 MT";
-    document.getElementById("relatorio-total-mes").textContent = "0,00 MT";
+  const elSemana = document.getElementById("relatorio-total-semana");
+  const elMes = document.getElementById("relatorio-total-mes");
+  if (elSemana) elSemana.textContent = `${totalSemana.toLocaleString("pt-MZ")} MT`;
+  if (elMes) elMes.textContent = `${totalMes.toLocaleString("pt-MZ")} MT`;
+
+  const corpoGeral = document.getElementById("tabela-historico-geral");
+  if (!corpoGeral) return;
+  corpoGeral.innerHTML = "";
+
+  const ordenados = [...pagamentos].sort((a, b) => (b.dataHora || 0) - (a.dataHora || 0));
+  if (!ordenados.length) {
+    corpoGeral.innerHTML = `<tr><td colspan="5" class="p-4 text-center text-slate-500">Nenhum pagamento registado até ao momento.</td></tr>`;
     return;
   }
 
-  pagamentosOrdenados.forEach(pag => {
-    if (pag.dataHora >= seteDiasAtras) totalSemana += pag.valor;
-    if (pag.dataHora >= timestampInicioMes) totalMes += pag.valor;
+  ordenados.forEach((pag) => {
+    const dataFmt = pag.dataHora
+      ? new Date(pag.dataHora).toLocaleDateString("pt-MZ")
+      : "---";
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td class="p-3 text-slate-400 font-mono text-xs">${dataFmt}</td>
+      <td class="p-3 font-medium text-white">${pag.alunoNome || "Aluno"}</td>
+      <td class="p-3 capitalize text-slate-300">${pag.plano || "mensal"}</td>
+      <td class="p-3 text-slate-300">${pag.metodo || "Dinheiro"}</td>
+      <td class="p-3 text-right font-semibold text-teal-400">${Number(pag.valor || 0).toLocaleString("pt-MZ")} MT</td>
+    `;
+    corpoGeral.appendChild(tr);
+  });
+}
 
-    const dataFormatada = new Date(pag.dataHora).toLocaleDateString("pt-MZ", { day: "2-digit", month: "2-digit", year: "numeric" });
-    const horaFormatada = new Date(pag.dataHora).toLocaleTimeString("pt-MZ", { hour: "2-digit", minute: "2-digit" });
+function filtrarHistoricoTreinos(periodo) {
+  periodoHistoricoTreinos = periodo || "diario";
+  const periodos = ["diario", "semanal", "mensal", "todos"];
+
+  periodos.forEach((p) => {
+    const btn = document.getElementById(`filtro-chk-${p}`);
+    if (!btn) return;
+    btn.className = p === periodoHistoricoTreinos
+      ? "px-3.5 py-1.5 rounded-full bg-teal-400 text-slate-950 text-xs font-extrabold transition"
+      : "px-3.5 py-1.5 rounded-full bg-[#04090e] border border-slate-800 text-slate-300 text-xs hover:bg-[#12222f] transition";
+  });
+
+  carregarHistoricoTreinos();
+}
+
+async function carregarHistoricoTreinos() {
+  const academia = await db.config.get("academia_principal");
+  const gymIdAtual = academia?.gymId;
+
+  const [todosCheckins, todosAlunos] = await Promise.all([
+    db.checkins.toArray(),
+    db.alunos.toArray()
+  ]);
+
+  const checkins = gymIdAtual
+    ? todosCheckins.filter(c => !c.gymId || c.gymId === gymIdAtual)
+    : todosCheckins;
+
+  const alunos = gymIdAtual
+    ? todosAlunos.filter(a => !a.gymId || a.gymId === gymIdAtual)
+    : todosAlunos;
+
+  const mapaAlunosPorId = new Map(alunos.map(a => [a.id, a]));
+  const mapaAlunosPorUid = new Map(alunos.filter(a => a.uid).map(a => [a.uid, a]));
+
+  const agora = Date.now();
+  const hojeInicio = new Date().setHours(0, 0, 0, 0);
+  const seteDiasAtras = agora - (7 * 24 * 60 * 60 * 1000);
+  const dataAtual = new Date();
+  const inicioMes = new Date(dataAtual.getFullYear(), dataAtual.getMonth(), 1).getTime();
+
+  let filtrados = checkins.filter((c) => {
+    const ts = c.dataHora || 0;
+    if (periodoHistoricoTreinos === "diario") return ts >= hojeInicio;
+    if (periodoHistoricoTreinos === "semanal") return ts >= seteDiasAtras;
+    if (periodoHistoricoTreinos === "mensal") return ts >= inicioMes;
+    return true;
+  });
+
+  const termoBusca = (document.getElementById("input-busca-historico-treino")?.value || "")
+    .trim()
+    .toLowerCase();
+
+  if (termoBusca) {
+    filtrados = filtrados.filter(c => (c.alunoNome || "").toLowerCase().includes(termoBusca));
+  }
+
+  filtrados.sort((a, b) => (b.dataHora || 0) - (a.dataHora || 0));
+  ultimosCheckinsFiltrados = filtrados;
+
+  const totalTreinos = filtrados.length;
+  const chavesAlunos = new Set();
+  const contagemPorAluno = new Map();
+  const contagemPorHora = new Map();
+  const contagemPorPlano = { mensal: 0, semanal: 0, diario: 0 };
+  const diasUnicos = new Set();
+
+  filtrados.forEach((chk) => {
+    const alunoRef = (chk.alunoUid && mapaAlunosPorUid.get(chk.alunoUid))
+      || (chk.alunoId && mapaAlunosPorId.get(chk.alunoId))
+      || null;
+
+    const nomeAluno = chk.alunoNome || alunoRef?.nome || "Aluno";
+    const chaveAluno = chk.alunoUid || chk.alunoId || nomeAluno.toLowerCase();
+    chavesAlunos.add(chaveAluno);
+
+    const atualCont = contagemPorAluno.get(chaveAluno) || { nome: nomeAluno, total: 0 };
+    atualCont.total += 1;
+    contagemPorAluno.set(chaveAluno, atualCont);
+
+    const plano = (chk.plano || alunoRef?.plano || "mensal").toLowerCase();
+    if (contagemPorPlano[plano] !== undefined) {
+      contagemPorPlano[plano] += 1;
+    }
+
+    if (chk.dataHora) {
+      const d = new Date(chk.dataHora);
+      diasUnicos.add(d.toISOString().slice(0, 10));
+      const hora = String(d.getHours()).padStart(2, "0");
+      contagemPorHora.set(hora, (contagemPorHora.get(hora) || 0) + 1);
+    }
+  });
+
+  const elTotalTreinos = document.getElementById("hist-total-treinos");
+  const elAlunosUnicos = document.getElementById("hist-alunos-unicos");
+  const elMediaDia = document.getElementById("hist-media-dia");
+  const elHorarioPico = document.getElementById("hist-horario-pico");
+  const elPicoQtd = document.getElementById("hist-pico-qtd");
+  const elResumoPlanos = document.getElementById("hist-resumo-planos");
+
+  if (elTotalTreinos) elTotalTreinos.textContent = String(totalTreinos);
+  if (elAlunosUnicos) {
+    elAlunosUnicos.textContent = `${chavesAlunos.size} ${chavesAlunos.size === 1 ? "aluno distinto" : "alunos distintos"}`;
+  }
+
+  let divisorDias = 1;
+  if (periodoHistoricoTreinos === "semanal") divisorDias = 7;
+  else if (periodoHistoricoTreinos === "mensal") divisorDias = Math.max(1, dataAtual.getDate());
+  else if (periodoHistoricoTreinos === "todos") divisorDias = Math.max(1, diasUnicos.size);
+
+  const mediaDia = totalTreinos > 0 ? (totalTreinos / divisorDias).toFixed(1).replace(".", ",") : "0";
+  if (elMediaDia) elMediaDia.textContent = mediaDia;
+
+  let melhorHora = "--:--";
+  let maiorQtdHora = 0;
+  contagemPorHora.forEach((qtd, hora) => {
+    if (qtd > maiorQtdHora) {
+      maiorQtdHora = qtd;
+      melhorHora = `${hora}:00`;
+    }
+  });
+
+  if (elHorarioPico) elHorarioPico.textContent = melhorHora;
+  if (elPicoQtd) {
+    elPicoQtd.textContent = maiorQtdHora > 0 ? `${maiorQtdHora} ${maiorQtdHora === 1 ? "entrada" : "entradas"}` : "maior movimento";
+  }
+
+  if (elResumoPlanos) {
+    elResumoPlanos.innerHTML = `
+      <p>Mensal: <strong class="text-teal-400">${contagemPorPlano.mensal}</strong></p>
+      <p>Semanal: <strong class="text-white">${contagemPorPlano.semanal}</strong> • Diário: <strong class="text-white">${contagemPorPlano.diario}</strong></p>
+    `;
+  }
+
+  const boxRanking = document.getElementById("hist-ranking-alunos");
+  if (boxRanking) {
+    const top3 = [...contagemPorAluno.values()]
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 3);
+
+    if (!top3.length) {
+      boxRanking.innerHTML = `<p class="text-slate-500">Sem registos neste período.</p>`;
+    } else {
+      const medalhas = ["🥇", "🥈", "🥉"];
+      boxRanking.innerHTML = top3.map((item, idx) => `
+        <div class="bg-[#04090e] border border-slate-800 rounded-xl p-3 flex items-center justify-between">
+          <span class="font-semibold text-white truncate">${medalhas[idx] || "•"} ${item.nome}</span>
+          <span class="text-teal-400 font-extrabold shrink-0 ml-2">${item.total} ${item.total === 1 ? "treino" : "treinos"}</span>
+        </div>
+      `).join("");
+    }
+  }
+
+  const corpoTabela = document.getElementById("tabela-historico-treinos-corpo");
+  if (!corpoTabela) return;
+  corpoTabela.innerHTML = "";
+
+  if (!filtrados.length) {
+    corpoTabela.innerHTML = `<tr><td colspan="5" class="p-4 text-center text-slate-500">Nenhum registo de treino encontrado para este filtro.</td></tr>`;
+    return;
+  }
+
+  filtrados.forEach((chk) => {
+    const alunoRef = (chk.alunoUid && mapaAlunosPorUid.get(chk.alunoUid))
+      || (chk.alunoId && mapaAlunosPorId.get(chk.alunoId))
+      || null;
+
+    const d = chk.dataHora ? new Date(chk.dataHora) : null;
+    const dataFmt = d ? d.toLocaleDateString("pt-MZ") : "---";
+    const horaFmt = d ? d.toLocaleTimeString("pt-MZ", { hour: "2-digit", minute: "2-digit" }) : "---";
+    const nomeAluno = chk.alunoNome || alunoRef?.nome || "Aluno";
+    const plano = chk.plano || alunoRef?.plano || "mensal";
 
     const tr = document.createElement("tr");
     tr.innerHTML = `
-      <td class="p-3 text-slate-400 text-xs">${dataFormatada} ${horaFormatada}</td>
-      <td class="p-3 font-medium text-white">${pag.alunoNome || "Aluno"}</td>
-      <td class="p-3 capitalize text-slate-300">${pag.plano}</td>
-      <td class="p-3 text-slate-300">${pag.metodo}</td>
-      <td class="p-3 text-right font-semibold text-emerald-400">${pag.valor.toLocaleString("pt-MZ")} MT</td>
+      <td class="p-3 text-slate-400 font-mono text-xs">${dataFmt}</td>
+      <td class="p-3 text-slate-400 font-mono text-xs">${horaFmt}</td>
+      <td class="p-3 font-medium text-white">${nomeAluno}</td>
+      <td class="p-3 capitalize text-slate-300">${plano}</td>
+      <td class="p-3 text-right">
+        <span class="bg-teal-500/20 text-teal-300 text-xs px-2.5 py-1 rounded-full border border-teal-500/30">Autorizado</span>
+      </td>
     `;
-    corpoHistorico.appendChild(tr);
+    corpoTabela.appendChild(tr);
   });
-
-  document.getElementById("relatorio-total-semana").textContent = `${totalSemana.toLocaleString("pt-MZ")} MT`;
-  document.getElementById("relatorio-total-mes").textContent = `${totalMes.toLocaleString("pt-MZ")} MT`;
 }
 
-iniciarApp();
+function exportarHistoricoCheckinsCSV() {
+  if (!ultimosCheckinsFiltrados.length) {
+    alert("Não há registos de treinos no período selecionado para exportar.");
+    return;
+  }
+
+  const linhas = ["Data;Hora;Aluno;Plano;Estado"];
+  ultimosCheckinsFiltrados.forEach((chk) => {
+    const d = chk.dataHora ? new Date(chk.dataHora) : null;
+    const dataFmt = d ? d.toLocaleDateString("pt-MZ") : "";
+    const horaFmt = d ? d.toLocaleTimeString("pt-MZ", { hour: "2-digit", minute: "2-digit" }) : "";
+    const nome = String(chk.alunoNome || "Aluno").replace(/;/g, ",");
+    const plano = String(chk.plano || "mensal").replace(/;/g, ",");
+    linhas.push(`${dataFmt};${horaFmt};${nome};${plano};Autorizado`);
+  });
+
+  const blob = new Blob(["\uFEFF" + linhas.join("\n")], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `historico-treinos-${periodoHistoricoTreinos}-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
